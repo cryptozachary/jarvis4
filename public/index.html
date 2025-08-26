@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Jarvis - Voice Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <style>
+    :root { --bg:#0f172a; --card:#121b36; --text:#e5e7eb; --muted:#93a3b8; --primary:#6ee7b7; --accent:#60a5fa; --ok:#22c55e; --bad:#ef4444; --border:#1f2b4a; }
+    body.light { --bg:#f7fafc; --card:#fff; --text:#0f172a; --muted:#475569; --primary:#2563eb; --accent:#0ea5e9; --ok:#16a34a; --bad:#b91c1c; --border:#e5e7eb; }
+    html,body{height:100%}
+    body{
+      margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;color:var(--text);
+      background:radial-gradient(1000px 800px at 20% -10%, rgba(110,231,183,.08), transparent 60%),
+                 radial-gradient(1200px 900px at 120% -30%, rgba(96,165,250,.08), transparent 60%),var(--bg);
+      padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right));
+      padding-top:calc(16px + env(safe-area-inset-top));padding-bottom:calc(16px + env(safe-area-inset-bottom));
+      min-height:100dvh;
+    }
+    .wrap{max-width:980px;margin:0 auto}
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    h1{margin:0;font-size:26px}.sub{color:var(--muted);font-size:13px}
+    .toggle{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;user-select:none}
+    .toggle input{accent-color:var(--accent)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width:840px){.grid{grid-template-columns:1fr}}
+    .panel{background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,0));border:1px solid var(--border);border-radius:14px;padding:14px;margin-top:12px;backdrop-filter:blur(4px)}
+    label{display:block;font-size:13px;color:var(--muted);margin:8px 0 6px}
+    select,input[type="text"],textarea,input[type="range"]{width:100%;padding:10px 12px;border-radius:10px;background:var(--card);color:var(--text);border:1px solid var(--border);font-size:14px}
+    textarea{min-height:90px;resize:vertical}
+    .controls{display:flex;flex-wrap:wrap;gap:8px}
+    button{padding:10px 14px;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--text);font-weight:600;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    @media (hover:none) and (pointer:coarse){button{padding:14px 18px;font-size:18px}}
+    .sticky{position:sticky;bottom:0;backdrop-filter:blur(6px);padding:10px;border-radius:10px}
+    .statusbar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+    .sitem{text-align:center;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:10px}
+    .sitem .k{display:block;font-size:12px;color:var(--muted)} .sitem .v{font-weight:700;margin-top:4px}
+    .ok{color:var(--ok)} .bad{color:var(--bad)}
+    .mic-row{display:grid;grid-template-columns:100px 1fr;gap:10px;align-items:center;margin-top:8px}
+    .micdot{width:18px;height:18px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#22c55e,#065f46);box-shadow:0 0 16px rgba(34,197,94,.5);transform:scale(.9);transition:transform .15s ease, filter .2s ease}
+    .micdot.idle{background:radial-gradient(circle at 40% 35%,#94a3b8,#334155);box-shadow:0 0 8px rgba(148,163,184,.4)}
+    .micdot.live{transform:scale(1.06);filter:saturate(1.2)}
+    #wave{width:100%;height:60px;background:var(--card);border-radius:10px;border:1px solid var(--border)}
+    #log{height:260px;overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--card);padding:10px;font-size:13px}
+    .line{padding:6px 4px;border-bottom:1px dashed var(--border)} .ts{color:var(--muted);margin-right:6px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>Jarvis Voice Assistant</h1>
+        <div class="sub">Vanilla JS · WebSocket relay · OpenAI Realtime</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="modeToggle" />
+        <span>Light mode</span>
+      </label>
+    </div>
+
+    <div id="appStatus" class="panel">Ready to connect</div>
+
+    <div class="panel grid">
+      <div>
+        <h3 style="margin:0 0 8px;color:var(--muted)">Connection & Audio</h3>
+        <div class="controls">
+          <button id="connectBtn">Connect</button>
+          <button id="disconnectBtn" disabled>Disconnect</button>
+          <button id="testBtn" disabled>Test Jarvis</button>
+          <button id="renewBtn" disabled>Renew Session</button>
+          <button id="enableAudio" style="display:none">Enable Sound</button>
+        </div>
+
+        <div class="statusbar">
+          <div class="sitem"><span class="k">Server</span><span id="stServer" class="v bad">Disconnected</span></div>
+          <div class="sitem"><span class="k">OpenAI</span><span id="stOpenAI" class="v bad">Disconnected</span></div>
+          <div class="sitem"><span class="k">Mic</span><span id="stMic" class="v bad">Inactive</span></div>
+          <div class="sitem"><span class="k">Session</span><span id="stCountdown" class="v">—</span></div>
+        </div>
+
+        <div class="mic-row">
+          <div class="micdot idle" id="micdot"></div>
+          <canvas id="wave"></canvas>
+        </div>
+
+        <div class="controls sticky" style="margin-top:10px">
+          <button id="startConversation" disabled>Start Conversation (Space)</button>
+          <button id="doneSpeaking" disabled>I'm Done Speaking</button>
+          <button id="endConversation" disabled>End Conversation</button>
+          <button id="clearLog">Clear Log</button>
+        </div>
+      </div>
+
+      <div>
+        <h3 style="margin:0 0 8px;color:var(--muted)">Assistant Settings</h3>
+        <label>Model</label>
+        <select id="modelSelect">
+          <option value="gpt-4o-realtime-preview-2024-12-17">gpt-4o-realtime-preview-2024-12-17</option>
+          <option value="gpt-4o-realtime-preview-2024-08-06">gpt-4o-realtime-preview-2024-08-06</option>
+        </select>
+
+        <label>Voice</label>
+        <select id="voiceSelect">
+          <option>alloy</option><option>echo</option><option>fable</option><option>onyx</option>
+          <option>nova</option><option>shimmer</option><option>sage</option><option>ash</option>
+          <option>ballad</option><option>coral</option><option>verse</option>
+        </select>
+
+        <label>Voice Detection</label>
+        <select id="vadTypeSelect">
+          <option value="server_vad">Server VAD (silence)</option>
+          <option value="semantic_vad">Semantic VAD</option>
+        </select>
+
+        <div id="serverVadOptions">
+          <label>Silence Duration <span id="silenceValue" style="float:right">1800ms</span></label>
+          <input type="range" id="silenceDuration" min="500" max="5000" step="100" value="1800" />
+          <label>VAD Threshold <span id="thresholdValue" style="float:right">0.3</span></label>
+          <input type="range" id="vadThreshold" min="0.1" max="0.9" step="0.1" value="0.3" />
+        </div>
+
+        <div id="semanticVadOptions" style="display:none">
+          <label>Eagerness</label>
+          <select id="eagernessSelect">
+            <option>low</option><option>medium</option><option>high</option><option selected>auto</option>
+          </select>
+        </div>
+
+        <label style="margin-top:10px">Instructions (Persona)</label>
+        <textarea id="instructionsInput" placeholder="Describe Jarvis' personality, rules, goals..."></textarea>
+
+        <div class="controls" style="margin-top:10px">
+          <button id="savePrefs">Save Preferences</button>
+          <button id="resetPrefs">Reset Defaults</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel"><div id="log"></div></div>
+  </div>
+
+  <script>
+    /* ---------- State ---------- */
+    let ws = null, audioContext = null, micStream = null, audioNode = null, audioSource = null;
+    let isProcessing = false, isServerConnected=false, isOpenAIConnected=false, isMicrophoneActive=false;
+    let sessionId = null, sessionTimer = null, sessionEndsAt=null, wakeLock=null;
+    let assistantSpeaking = false; // NEW: guard for barge-in
+    let usingAutoVAD = true;       // NEW: disable Done in auto mode
+
+    // throttle PCM appends (NEW)
+    let appendQueue = [];
+    let appendFlushTimer = null;
+    const APPEND_FLUSH_MS = 120;
+
+    // playback queue
+    let playQueue = [], playing = false;
+
+    // waveform
+    const waveCanvas = document.getElementById('wave'); const waveCtx = waveCanvas.getContext('2d');
+    function fitCanvas(){ waveCanvas.width = waveCanvas.clientWidth*(window.devicePixelRatio||1); waveCanvas.height = waveCanvas.clientHeight*(window.devicePixelRatio||1); }
+    window.addEventListener('resize', fitCanvas); fitCanvas();
+
+    /* ---------- UI refs ---------- */
+    const $ = (id) => document.getElementById(id);
+    const stServer=$('stServer'), stOpenAI=$('stOpenAI'), stMic=$('stMic'), stCountdown=$('stCountdown'), micdot=$('micdot');
+    const appStatus = document.getElementById('appStatus');
+
+    function log(msg){const line=document.createElement('div');line.className='line';const d=new Date();const t=`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;line.innerHTML=`<span class="ts">${t}</span>${msg}`;const el=document.getElementById('log');el.appendChild(line);el.scrollTop=el.scrollHeight;console.log(msg);}
+    function setStatus(el, ok, on='Connected', off='Disconnected'){ el.textContent=ok?on:off; el.classList.remove('ok','bad'); el.classList.add(ok?'ok':'bad'); }
+    function refreshStatus(){
+      setStatus(stServer, isServerConnected); setStatus(stOpenAI, isOpenAIConnected);
+      setStatus(stMic, isMicrophoneActive, 'Active', 'Inactive');
+      $('connectBtn').disabled = isServerConnected;
+      $('disconnectBtn').disabled = !isServerConnected;
+      $('testBtn').disabled = !isOpenAIConnected;
+      $('renewBtn').disabled = !isOpenAIConnected;
+      $('startConversation').disabled = !isOpenAIConnected || isMicrophoneActive;
+      // NEW: disable Done in auto mode to avoid mixing manual + auto
+      $('doneSpeaking').disabled = !isMicrophoneActive || usingAutoVAD;
+      $('endConversation').disabled = !isMicrophoneActive;
+    }
+    function updateAppStatus(text, isErr=false){ appStatus.textContent=text; appStatus.style.color = isErr ? '#ef4444' : 'inherit'; }
+    function showMic(live){ micdot.classList.toggle('idle', !live); micdot.classList.toggle('live', !!live); }
+
+    /* ---------- Prefs ---------- */
+    const defaults = {
+      model:'gpt-4o-realtime-preview-2024-12-17', voice:'alloy', vadType:'server_vad',
+      threshold:0.3, silence:1800, eagerness:'auto',
+      instructions:`You are Jarvis, The most advanced AI assistant. Slightly sarcastic, concise, witty.
+Address the user respectfully. Love tech. Mildly concerned about humanity's future.
+Keep responses under 10 sentences unless asked for more.`
+    };
+    function loadPrefs(){ try{ return { ...defaults, ...JSON.parse(localStorage.getItem('jarvis.prefs')||'{}') }; }catch{ return { ...defaults }; } }
+    function savePrefs(p){ localStorage.setItem('jarvis.prefs', JSON.stringify(p)); }
+    function applyPrefs(){
+      const p = loadPrefs();
+      $('modelSelect').value=p.model; $('voiceSelect').value=p.voice;
+      $('vadTypeSelect').value=p.vadType; $('vadThreshold').value=p.threshold; $('thresholdValue').textContent=p.threshold;
+      $('silenceDuration').value=p.silence; $('silenceValue').textContent=p.silence+'ms';
+      $('eagernessSelect').value=p.eagerness; $('instructionsInput').value=p.instructions;
+      $('semanticVadOptions').style.display = p.vadType==='semantic_vad'?'block':'none';
+      $('serverVadOptions').style.display   = p.vadType==='server_vad'?'block':'none';
+      usingAutoVAD = true; // both options are auto modes in current UI
+      refreshStatus();
+    }
+
+    /* ---------- HTTPS hint + audio bootstrap ---------- */
+    function needSecureHint(){ if (location.hostname==='localhost'||location.hostname==='127.0.0.1') return false; return location.protocol!=='https:'; }
+    document.addEventListener('visibilitychange', ()=>{ if (audioContext && audioContext.state==='suspended' && !document.hidden){ audioContext.resume().catch(()=>{}); } });
+    function maybeShowEnableAudio(){
+      if (!audioContext) audioContext=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+      if (audioContext.state==='suspended') $('enableAudio').style.display='inline-block';
+      $('enableAudio').onclick=async()=>{ try{await audioContext.resume();}catch{} $('enableAudio').style.display='none'; };
+    }
+
+    /* ---------- Wake Lock ---------- */
+    async function keepAwake(on){ try{ if(on && 'wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>{wakeLock=null}); } else if(!on && wakeLock){ await wakeLock.release(); wakeLock=null; } }catch{} }
+
+    /* ---------- Waveform ---------- */
+    function drawWave(level=0){ const w=waveCanvas.width,h=waveCanvas.height; waveCtx.clearRect(0,0,w,h); const mid=h/2; waveCtx.fillStyle='rgba(255,255,255,.05)'; waveCtx.fillRect(0,0,w,h); waveCtx.strokeStyle='rgba(255,255,255,.45)'; waveCtx.lineWidth=2; const amp=Math.min(1,level)*(h*0.45); waveCtx.beginPath(); waveCtx.moveTo(0,mid-amp); waveCtx.lineTo(w,mid-amp); waveCtx.moveTo(0,mid+amp); waveCtx.lineTo(w,mid+amp); waveCtx.stroke(); }
+
+    /* ---------- Playback ---------- */
+    async function enqueuePCM16(base64){
+      if (!audioContext) audioContext=new (window.AudioContext||window.webkitAudioContext)();
+      assistantSpeaking = true; // start of assistant audio
+      const bin=Uint8Array.from(atob(base64),c=>c.charCodeAt(0)); const view=new DataView(bin.buffer); const samples=bin.byteLength/2;
+      const buffer=audioContext.createBuffer(1,samples,24000); const ch=buffer.getChannelData(0);
+      for(let i=0;i<samples;i++) ch[i]=view.getInt16(i*2,true)/32768;
+      playQueue.push(buffer); if(!playing){ playing=true; drainQueue(); }
+    }
+    async function drainQueue(){
+      while(playQueue.length){
+        const src=audioContext.createBufferSource(); src.buffer=playQueue.shift(); src.connect(audioContext.destination);
+        await new Promise(r=>{ src.onended=r; src.start(); });
+      }
+      playing=false; assistantSpeaking=false; // end of assistant audio
+    }
+
+    /* ---------- Worklet fallback ---------- */
+    async function ensureWorkletOrFallback(){
+      if (!audioContext) audioContext=new (window.AudioContext||window.webkitAudioContext)({sampleRate:48000});
+      try{ if(!audioContext.audioWorklet || audioContext._workletAdded) return true; await audioContext.audioWorklet.addModule('/pcm-resampler.worklet.js'); audioContext._workletAdded=true; return true; }
+      catch{ return false; }
+    }
+
+    /* ---------- Session + countdown ---------- */
+    function startCountdown(minutes=30){
+      sessionEndsAt=Date.now()+minutes*60*1000;
+      const timer=setInterval(()=>{ if(!sessionEndsAt){clearInterval(timer);return;}
+        const left=sessionEndsAt-Date.now(); if(left<=0){ stCountdown.textContent='expiring…'; clearInterval(timer); return; }
+        const m=Math.floor(left/60000), s=Math.floor((left%60000)/1000); stCountdown.textContent=`${m}:${String(s).padStart(2,'0')} left`;
+      },1000);
+    }
+    async function createSession(){
+      const p=loadPrefs(); const body={ model:p.model, voice:p.voice, instructions:p.instructions };
+      const res=await fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!res.ok) throw new Error('Session create failed'); const json=await res.json(); return json.sessionId;
+    }
+
+    /* ---------- WS ---------- */
+    function bindSocket(){
+      ws.onopen = async () => {
+        isServerConnected=true; refreshStatus(); updateAppStatus('Connected to server');
+        try{
+          if (needSecureHint()) updateAppStatus('Tip: On mobile use HTTPS (set HTTPS=true) → https://<LAN-IP>:PORT');
+          sessionId=await createSession(); ws.send(JSON.stringify({type:'session.init',sessionId}));
+          startCountdown(30); clearTimeout(sessionTimer); sessionTimer=setTimeout(renewSession,28*60*1000);
+        }catch{ updateAppStatus('Failed to create session', true); }
+      };
+
+      ws.onmessage = (ev) => {
+        let m; try{ m=JSON.parse(ev.data); }catch{ return; }
+        switch(m.type){
+          case 'server.welcome': log('Welcome from server'); break;
+          case 'openai.connected': isOpenAIConnected=true; refreshStatus(); updateAppStatus('OpenAI connected'); break;
+          case 'openai.disconnected':
+            isOpenAIConnected=false; isMicrophoneActive=false; assistantSpeaking=false;
+            refreshStatus(); updateAppStatus('OpenAI disconnected'); stopAudio(); break;
+
+          case 'response.audio.delta': if(m.delta) enqueuePCM16(m.delta); break;
+          case 'response.audio.done': assistantSpeaking=false; break;
+          case 'response.done': case 'response.complete': assistantSpeaking=false; break;
+
+          case 'input_audio_buffer.speech_started':
+            log('🎤 You started speaking'); showMic(true);
+            // NEW: Only cancel if assistant is actually speaking (barge-in)
+            if (assistantSpeaking) { try{ ws.send(JSON.stringify({type:'response.cancel'})); }catch{} }
+            break;
+
+          case 'input_audio_buffer.speech_stopped': log('🕑 Processing…'); showMic(false); break;
+
+          case 'response.text.delta':
+          case 'response.output_text.delta':
+            if (typeof m.delta === 'string') log('Jarvis: ' + m.delta); break;
+
+          case 'error':
+            log('❌ ' + (m.code ? m.code+': ' : '') + (m.message||'Error'));
+            if (m.code === 'openai_not_connected'){ isOpenAIConnected=false; isMicrophoneActive=false; refreshStatus(); }
+            break;
+        }
+      };
+
+      ws.onclose = () => { isServerConnected=false; isOpenAIConnected=false; isMicrophoneActive=false; assistantSpeaking=false; refreshStatus(); updateAppStatus('Disconnected from server'); stopAudio(); };
+      ws.onerror = () => { isServerConnected=false; refreshStatus(); updateAppStatus('WebSocket error', true); };
+    }
+
+    /* ---------- Audio capture ---------- */
+    async function startMicrophone(){
+      const okWorklet = await ensureWorkletOrFallback();
+      if (!micStream){
+        if (needSecureHint()) updateAppStatus('Mobile mic needs HTTPS. Use https://<LAN-IP>:PORT', true);
+        micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } });
+      }
+      const analyser=audioContext.createAnalyser(); analyser.fftSize=2048; const buf=new Float32Array(analyser.fftSize);
+      const source=audioContext.createMediaStreamSource(micStream);
+      const dummy=audioContext.createGain(); dummy.gain.value=0;
+
+      const raf=()=>{ if(!isProcessing) return; analyser.getFloatTimeDomainData(buf); let sum=0; for(let i=0;i<buf.length;i++) sum+=buf[i]*buf[i]; drawWave(Math.sqrt(sum/buf.length)*3.0); requestAnimationFrame(raf); };
+
+      if (okWorklet){
+        const node=new AudioWorkletNode(audioContext,'pcm-resampler',{processorOptions:{targetSampleRate:24000}});
+        node.port.onmessage=(e)=> sendPcm(e.data);
+        source.connect(analyser); analyser.connect(node).connect(dummy).connect(audioContext.destination);
+        audioNode=node;
+      } else {
+        const proc=audioContext.createScriptProcessor(4096,1,1);
+        proc.onaudioprocess=(ev)=>{ if(!isProcessing) return;
+          const input=ev.inputBuffer.getChannelData(0); const ratio=24000/audioContext.sampleRate;
+          const outLen=Math.floor(input.length*ratio); const out=new Int16Array(outLen);
+          for(let i=0;i<outLen;i++){ const idx=i/ratio; const i0=Math.floor(idx), i1=Math.min(i0+1,input.length-1); const t=idx-i0; const s=input[i0]*(1-t)+input[i1]*t; out[i]=(Math.max(-1,Math.min(1,s))*32767)|0; }
+          sendPcm(out.buffer);
+        };
+        source.connect(analyser); analyser.connect(proc).connect(dummy).connect(audioContext.destination);
+        audioNode=proc;
+      }
+
+      audioSource=source; isProcessing=true; isMicrophoneActive=true; refreshStatus(); keepAwake(true); showMic(true);
+      updateAppStatus('Connected! Start speaking…'); log('🎙️ Voice conversation started'); requestAnimationFrame(raf);
+    }
+
+    // NEW: throttle & batch PCM appends
+    function sendPcm(ab){
+      if (!isProcessing || !ws || ws.readyState!==WebSocket.OPEN) return;
+      appendQueue.push(new Uint8Array(ab));
+      if (!appendFlushTimer) appendFlushTimer = setTimeout(flushAppend, APPEND_FLUSH_MS);
+    }
+    function flushAppend(){
+      appendFlushTimer = null;
+      if (!appendQueue.length) return;
+      let total=0; for(const u of appendQueue) total+=u.length;
+      const merged=new Uint8Array(total); let off=0; for(const u of appendQueue){ merged.set(u,off); off+=u.length; }
+      appendQueue.length = 0;
+      const b64 = btoa(String.fromCharCode(...merged));
+      try { ws.send(JSON.stringify({ type:'input_audio_buffer.append', audio: b64 })); } catch {}
+      if (isProcessing) appendFlushTimer = setTimeout(flushAppend, APPEND_FLUSH_MS);
+    }
+    function flushAppendNow(){ if (appendFlushTimer){ clearTimeout(appendFlushTimer); appendFlushTimer=null; } flushAppend(); }
+
+    function stopAudio(){
+      isProcessing=false; showMic(false);
+      try{ if(audioNode) audioNode.disconnect(); }catch{} audioNode=null;
+      try{ if(audioSource) audioSource.disconnect(); }catch{} audioSource=null;
+      if (micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+      appendQueue.length=0; if (appendFlushTimer){ clearTimeout(appendFlushTimer); appendFlushTimer=null; }
+      isMicrophoneActive=false; refreshStatus(); keepAwake(false);
+    }
+
+    /* ---------- Actions ---------- */
+    $('connectBtn').onclick = () => {
+      if (ws && ws.readyState===WebSocket.OPEN) return;
+      const proto = location.protocol==='https:' ? 'wss:' : 'ws:'; ws = new WebSocket(`${proto}//${location.host}`); bindSocket();
+    };
+    $('disconnectBtn').onclick = () => { if (isMicrophoneActive) stopAudio(); if (ws){ try{ ws.close(); }catch{} } ws=null; sessionId=null; refreshStatus(); };
+
+    $('testBtn').onclick = () => {
+      if (!ws || ws.readyState!==WebSocket.OPEN) return;
+      const p = loadPrefs();
+      const turn_detection = (p.vadType==='server_vad')
+        ? { type:'server_vad', threshold:Number(p.threshold), prefix_padding_ms:300, silence_duration_ms:Number(p.silence), create_response:true, interrupt_response:true }
+        : { type:'semantic_vad', eagerness:p.eagerness, create_response:true, interrupt_response:true };
+      ws.send(JSON.stringify({ type:'session.update', session:{ voice:p.voice, instructions:p.instructions, input_audio_format:'pcm16', output_audio_format:'pcm16', turn_detection }}));
+      ws.send(JSON.stringify({ type:'conversation.item.create', item:{ type:'message', role:'user', content:[{ type:'input_text', text:'Hello Jarvis, introduce yourself in one witty line.'}]}}));
+      ws.send(JSON.stringify({ type:'response.create', response:{} }));
+    };
+
+    $('renewBtn').onclick = async () => {
+      if (!ws || ws.readyState!==WebSocket.OPEN) return;
+      const micWasOn=isMicrophoneActive; if (micWasOn) stopAudio();
+      ws.send(JSON.stringify({ type:'session.end' }));
+      setTimeout(async()=>{ sessionId=await createSession(); ws.send(JSON.stringify({ type:'session.init', sessionId })); startCountdown(30); if(micWasOn) setTimeout(()=>$('startConversation').click(),1200); },800);
+    };
+
+    $('startConversation').onclick = async () => {
+      if (!sessionId){ updateAppStatus('No session. Connect first.', true); return; }
+      maybeShowEnableAudio();
+      try{
+        const p=loadPrefs();
+        usingAutoVAD = true; // both options are auto in current UI
+        const turn_detection = (p.vadType==='server_vad')
+          ? { type:'server_vad', threshold:Number(p.threshold), prefix_padding_ms:300, silence_duration_ms:Number(p.silence), create_response:true, interrupt_response:true }
+          : { type:'semantic_vad', eagerness:p.eagerness, create_response:true, interrupt_response:true };
+        ws.send(JSON.stringify({ type:'session.update', session:{ voice:p.voice, instructions:p.instructions, input_audio_format:'pcm16', output_audio_format:'pcm16', turn_detection }}));
+        await startMicrophone(); refreshStatus();
+      }catch(e){ updateAppStatus('Mic error: '+e.message, true); }
+    };
+
+    // Manual "Done" guarded: only active if we ever add a manual mode
+    $('doneSpeaking').onclick = () => {
+      if (!ws || ws.readyState!==WebSocket.OPEN) return;
+      if (usingAutoVAD){ log('ℹ️ Auto-VAD mode: no need to press Done.'); return; }
+      flushAppendNow();
+      try { ws.send(JSON.stringify({ type:'input_audio_buffer.commit' })); ws.send(JSON.stringify({ type:'response.create', response:{} })); } catch {}
+      showMic(false); isProcessing=false; refreshStatus();
+    };
+
+    $('endConversation').onclick = () => { stopAudio(); if (ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({ type:'session.end' })); };
+    $('clearLog').onclick = () => { document.getElementById('log').innerHTML=''; };
+
+    // Spacebar toggles start/done
+    window.addEventListener('keydown',(e)=>{ if(e.code==='Space'){ e.preventDefault(); if(!isOpenAIConnected) return; if(!isMicrophoneActive) $('startConversation').click(); else $('doneSpeaking').click(); } });
+
+    // Pause mic when hidden
+    document.addEventListener('visibilitychange', ()=>{ if (document.hidden && isMicrophoneActive){ stopAudio(); log('App hidden → mic paused'); } });
+
+    // VAD UI wires
+    $('silenceDuration').oninput=(e)=> $('silenceValue').textContent=e.target.value+'ms';
+    $('vadThreshold').oninput=(e)=> $('thresholdValue').textContent=e.target.value;
+    $('vadTypeSelect').onchange=(e)=>{ const v=e.target.value; $('semanticVadOptions').style.display=v==='semantic_vad'?'block':'none'; $('serverVadOptions').style.display=v==='server_vad'?'block':'none'; };
+
+    // Save / reset prefs
+    $('savePrefs').onclick=()=>{ const p={ model:$('modelSelect').value, voice:$('voiceSelect').value, vadType:$('vadTypeSelect').value, threshold:Number($('vadThreshold').value), silence:Number($('silenceDuration').value), eagerness:$('eagernessSelect').value, instructions:$('instructionsInput').value.trim()||defaults.instructions }; savePrefs(p); applyPrefs(); log('Preferences saved.'); };
+    $('resetPrefs').onclick=()=>{ savePrefs(defaults); applyPrefs(); log('Preferences reset to defaults.'); };
+
+    // Dark/light
+    const modeToggle=document.getElementById('modeToggle');
+    const savedMode=localStorage.getItem('jarvis.mode')||'dark';
+    if(savedMode==='light'){ document.body.classList.add('light'); modeToggle.checked=true; }
+    modeToggle.onchange=()=>{ document.body.classList.toggle('light',modeToggle.checked); localStorage.setItem('jarvis.mode', modeToggle.checked?'light':'dark'); };
+
+    // Boot
+    drawWave(0); applyPrefs(); refreshStatus(); log('App ready. Click Connect to begin.'); maybeShowEnableAudio();
+
+    // Cleanup
+    window.addEventListener('beforeunload',()=>{ isProcessing=false; try{ if(ws && ws.readyState===WebSocket.OPEN){ ws.send(JSON.stringify({type:'session.end'})); ws.close(); } }catch{} try{ if(audioContext && audioContext.state!=='closed') audioContext.close(); }catch{} try{ if(micStream) micStream.getTracks().forEach(t=>t.stop()); }catch{} });
+  </script>
+</body>
+</html>
