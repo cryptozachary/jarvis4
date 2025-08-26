@@ -1,9 +1,9 @@
-// server.js — Jarvis Voice Assistant (mobile-ready server)
-// - Serves index.html from "/" (fixes "Cannot GET /")
-// - Binds to 0.0.0.0 so you can use your LAN IP
-// - Optional HTTPS for mobile getUserMedia over IP (set HTTPS=true, provide certs)
-// - Realtime OpenAI WS via Authorization headers
-// - Continuity replay, granular errors, heartbeat, TTL cleanup
+// server.js — Jarvis Voice Assistant (Phase 1: reliability/health)
+// - Serves index.html
+// - Optional HTTPS for LAN/IP use (set HTTPS=true)
+// - Realtime OpenAI WS relay
+// - Heartbeat/TTL, continuity replay
+// - NEW: quick WS ping/pong for client RTT; favicon shim
 'use strict';
 
 const fs = require('fs');
@@ -15,7 +15,6 @@ const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
 
-/** ---------- Config ---------- */
 const app = express();
 
 const USE_HTTPS = String(process.env.HTTPS || 'false').toLowerCase() === 'true';
@@ -49,20 +48,19 @@ const HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS || 15000)
 const PONG_GRACE_MS = Number(process.env.PONG_GRACE_MS || 10000);
 const MAX_CONTEXT_MESSAGES = Number(process.env.MAX_CONTEXT_MESSAGES || 10);
 
-/** ---------- Static + Middleware ---------- */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// Serve static if you keep assets in ./public (optional)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Serve the folder where index.html lives
+// Serve UI
 const staticDir = __dirname;
 app.use(express.static(staticDir));
-app.get('/', (_req, res) => {
-  res.sendFile(path.join(staticDir, 'index.html'));
-});
+app.get('/', (_req, res) => res.sendFile(path.join(staticDir, 'index.html')));
 
-// Serve the resampler worklet if the UI requests external module
+// Avoid noisy favicon 404 in dev tools
+app.get('/favicon.ico', (_req, res) => res.status(204).end());
+
+// Serve the resampler worklet
 app.get('/pcm-resampler.worklet.js', (_req, res) => {
   res.type('application/javascript').send(`
     class PCMResampler extends AudioWorkletProcessor {
@@ -98,7 +96,6 @@ function sendError(clientId, code, message, details) {
 }
 
 /** ---------- API: Create/configure a session ---------- */
-// POST /api/session { model?, voice?, instructions? }
 app.post('/api/session', (req, res) => {
   if (!OPENAI_API_KEY) {
     return res.status(500).json({ error: 'openai_key_missing', message: 'OpenAI API key not configured' });
@@ -141,14 +138,19 @@ wss.on('connection', (ws) => {
       if (s) s.lastActivity = new Date();
     }
 
+    // Local RTT ping for health HUD
+    if (data.type === 'client.ping') {
+      return sendToClient(clientId, { type: 'server.pong', t: data.t || Date.now() });
+    }
+
+    if (data.type === 'session.init') return handleSessionInit(clientId, data.sessionId);
+    if (data.type === 'session.end')  return handleSessionEnd(clientId);
+
     // record conversation items (for continuity)
     if (data.type === 'conversation.item.create' && data.item) {
       c.conversationHistory.push({ role: data.item.role, content: data.item.content });
       while (c.conversationHistory.length > MAX_CONTEXT_MESSAGES * 2) c.conversationHistory.shift();
     }
-
-    if (data.type === 'session.init') return handleSessionInit(clientId, data.sessionId);
-    if (data.type === 'session.end')  return handleSessionEnd(clientId);
 
     // forward anything else to OpenAI
     const ows = openaiConnections.get(clientId);
@@ -205,7 +207,6 @@ async function handleSessionInit(clientId, maybeSessionId) {
     openaiConnections.set(clientId, openaiWs);
 
     openaiWs.on('open', () => {
-      // configure session first
       openaiWs.send(JSON.stringify({
         type: 'session.update',
         session: {
@@ -216,7 +217,6 @@ async function handleSessionInit(clientId, maybeSessionId) {
           turn_detection: { type: 'server_vad', threshold: 0.3, prefix_padding_ms: 300, silence_duration_ms: 2000 }
         }
       }));
-      // replay continuity
       const past = (c.conversationHistory || []).slice(-MAX_CONTEXT_MESSAGES * 2);
       for (const msg of past) {
         openaiWs.send(JSON.stringify({
@@ -227,7 +227,6 @@ async function handleSessionInit(clientId, maybeSessionId) {
       sendToClient(clientId, { type: 'openai.connected', sessionId });
     });
 
-    // forward messages + accumulate assistant text
     openaiWs.on('message', (raw) => {
       const s = raw.toString();
       sendToClient(clientId, s);
@@ -280,7 +279,6 @@ function safeCloseOpenAI(clientId, code = 1000, reason = 'close') {
 }
 
 /** ---------- Housekeeping ---------- */
-// TTL cleanup
 setInterval(() => {
   const cutoffMs = SESSION_TTL_MINUTES * 60 * 1000;
   const now = Date.now();
@@ -290,7 +288,6 @@ setInterval(() => {
   }
 }, 60_000);
 
-// Heartbeat
 setInterval(() => {
   const now = Date.now();
   for (const [id, c] of clients) {
@@ -313,6 +310,5 @@ server.listen(PORT, () => {
   if (!OPENAI_API_KEY) console.error('Set OPEN_AI_KEY or OPENAI_API_KEY in your .env');
 });
 
-// global error logs
 process.on('uncaughtException', (e) => console.error('Uncaught:', e));
 process.on('unhandledRejection', (r,p) => console.error('Unhandled:', r));
